@@ -1,30 +1,34 @@
-# BeeFitness Payments Gateway
+# بوابة الدفع للأعمال — Tabby وTamara
 
-Production-oriented gateway scaffold for BeeFitness on Base44, with Tabby/Tamara adapters to be enabled after merchant credentials and exact production configuration are supplied.
+**الوصف المختصر:** نموذج أولي لخادم وسيط يهيّئ تدفق الطلبات والتكامل مع Tabby وTamara، مع واجهة ولوحة متابعة.
 
-## Architecture
-Base44 checkout -> server-side gateway -> Tabby/Tamara -> HTTPS webhooks -> idempotent state updates -> dashboard.
+## الفكرة والهدف
+فصل منطق الطلبات وحالة الدفع عن واجهة المتجر، والتحقق من إشعارات مزود الدفع قبل تحديث حالة الطلب. يستهدف المشروع متاجر تحتاج إلى تكامل دفع منظم وقابل للاختبار.
 
-## Current launch mode
-Preview mode is intentionally enabled. It exercises the order/state/dashboard flow without sending real payment requests.
+## البنية المقصودة
+`Base44 checkout → server-side gateway → Tabby/Tamara → HTTPS webhooks → state updates → dashboard`
 
-## Security
-- Provider secrets are server-side only.
-- CORS is restricted by ALLOWED_ORIGIN.
-- Helmet and rate limiting enabled.
-- Input validated with Zod.
-- Webhooks are idempotency-aware.
-- Do not mark a live order paid from frontend redirect alone; rely on verified provider events/API state.
+## الحالة الحالية
+وضع المعاينة مفعّل بحسب التوثيق الحالي. هذا المستودع **ليس دليلًا على أن عمليات الدفع الحقيقية مفعلة أو معتمدة لدى مزودي الدفع**. لا تعتمد عليه لتحصيل أموال فعلية قبل إكمال مفاتيح التاجر واختبارات sandbox والتحقق من webhooks.
 
-## Before production
-1. Obtain Tabby sandbox/production keys from the merchant dashboard.
-2. Obtain Tamara API token, notification token and public key.
-3. Confirm exact webhook authentication/signature requirements for the merchant accounts.
-4. Configure HTTPS webhook URLs.
-5. Run sandbox test cases: approved, declined, authorized, captured, cancelled, refunded, expired.
-6. Only then set PAYMENT_MODE=live and deploy the provider adapters.
+## ما يتضمنه التصميم
+- إعدادات خادم لمزودي الدفع.
+- تقييد CORS عبر `ALLOWED_ORIGIN`.
+- Helmet وتحديد معدل الطلبات.
+- التحقق من المدخلات باستخدام Zod.
+- مراعاة تكرار إشعارات webhooks عند تحديث حالة الطلب.
 
-## Flexbox
-تذكير: واجهة لوحة التحكم تستخدم Flexbox في الشريط العلوي، مع Grid لبطاقات المؤشرات.
+## قائمة ما قبل الإنتاج
+1. توفير مفاتيح sandbox أو الإنتاج من حساب التاجر الرسمي.
+2. ضبط رموز Tamara ومفاتيح الإشعارات وفق متطلبات الحساب.
+3. التحقق من توقيع ومصادقة webhooks حسب الوثائق الرسمية لكل مزود.
+4. ضبط عناوين HTTPS العامة.
+5. اختبار حالات الموافقة والرفض والتفويض والتحصيل والإلغاء والاسترداد والانتهاء.
+6. عدم تعيين الطلب إلى PAID اعتمادًا على تحويل المتصفح وحده؛ يجب التحقق من حدث مزود موثوق.
+7. تفعيل وضع الإنتاج فقط بعد مراجعة أمنية واختبار ناجح.
 
-المالك: Ahmed jafari — تلفون: 0173266999
+## التشغيل والأمان
+راجع `package.json` وملفات الإعداد لمعرفة أوامر التشغيل الفعلية. لا تضع مفاتيح API أو كلمات مرور أو بيانات شخصية داخل GitHub. استخدم متغيرات بيئة في منصة الاستضافة.
+
+## الملكية
+M5mOsH

@@ -84,6 +84,9 @@ function signSession(payload) {
 }
 
 function readSession(req) {
+  // Fail closed if the authentication configuration is incomplete. Without this
+  // guard, an empty session secret could let an attacker forge an HMAC cookie.
+  if (!ADMIN_USERNAME || !ADMIN_PASSWORD_HASH || !ADMIN_SESSION_SECRET) return null;
   const raw = req.headers.cookie?.split(";").map(x => x.trim()).find(x => x.startsWith("bf_admin="))?.slice(9);
   if (!raw) return null;
   const [body, sig] = raw.split(".");
@@ -174,8 +177,9 @@ app.post("/api/checkout", (req, res) => {
   orders.set(order.id, order);
 
   if (MODE !== "live") {
-    order.providerOrderId = id(data.provider);
-    order.status = "paid";
+    // Preview orders are not real payments and must never count as paid revenue.
+    order.providerOrderId = null;
+    order.status = "preview";
     order.checkoutUrl = data.returnUrl + "?payment=preview&order=" + encodeURIComponent(order.id);
     orders.set(order.id, order);
     return res.json({ orderId: order.id, checkoutUrl: order.checkoutUrl, status: order.status, preview: true });
@@ -188,29 +192,21 @@ app.post("/api/checkout", (req, res) => {
 });
 
 function recordWebhook(provider, req, res) {
-  const eventId = req.get("x-event-id") || req.get("x-webhook-id") ||
-    crypto.createHash("sha256").update(JSON.stringify(req.body)).digest("hex");
-  if (events.has(eventId)) return res.status(200).json({ ok: true, idempotent: true });
-  events.set(eventId, { provider, receivedAt: new Date().toISOString() });
-
-  const b = req.body || {};
-  const ref = b.order_reference_id || b.reference_id || b.order_reference || b.order_id;
-  const order = [...orders.values()].find(o =>
-    o.referenceId === ref || o.providerOrderId === ref || o.id === ref
-  );
-
-  if (order) {
-    const e = String(b.event_type || b.event || b.status || "").toLowerCase();
-    if (/declin|fail|cancel|expire/.test(e)) order.status = "failed";
-    else if (/captur/.test(e)) order.status = "captured";
-    else if (/author|approv|paid/.test(e)) order.status = "paid";
-    orders.set(order.id, order);
-  }
-  res.status(200).json({ ok: true });
+  // Never accept unsigned provider events. Official provider-specific signature
+  // verification must be implemented and tested before webhook state changes.
+  return res.status(503).json({
+    error: "WEBHOOK_SIGNATURE_VERIFICATION_NOT_CONFIGURED",
+    provider,
+    message: "Webhook processing is disabled until official signature verification is configured."
+  });
 }
 
 app.post("/webhooks/tamara", (req, res) => recordWebhook("tamara", req, res));
 app.post("/webhooks/tabby", (req, res) => recordWebhook("tabby", req, res));
 
 app.use((req, res) => res.sendFile(process.cwd() + "/public/index.html"));
-app.listen(PORT, () => console.log("BeeFitness payment gateway listening on " + PORT));
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => console.log("BeeFitness payment gateway listening on " + PORT));
+}
+
+export { app, orders, stats };

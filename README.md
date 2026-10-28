@@ -1,34 +1,64 @@
 # بوابة الدفع للأعمال — Tabby وTamara
 
-**الوصف المختصر:** نموذج أولي لخادم وسيط يهيّئ تدفق الطلبات والتكامل مع Tabby وTamara، مع واجهة ولوحة متابعة.
+## العربية
 
-## الفكرة والهدف
-فصل منطق الطلبات وحالة الدفع عن واجهة المتجر، والتحقق من إشعارات مزود الدفع قبل تحديث حالة الطلب. يستهدف المشروع متاجر تحتاج إلى تكامل دفع منظم وقابل للاختبار.
+**الحالة:** نموذج أولي بوضع `preview` فقط. هذا المستودع لا يثبت أن المدفوعات الحقيقية مفعّلة أو معتمدة من Tabby أو Tamara.
 
-## البنية المقصودة
-`Base44 checkout → server-side gateway → Tabby/Tamara → HTTPS webhooks → state updates → dashboard`
+### الضوابط الحالية
+- مصادقة لوحة الإدارة تعتمد `ADMIN_USERNAME` و`ADMIN_PASSWORD_HASH` و`ADMIN_SESSION_SECRET`.
+- عند غياب أي متغير من متغيرات مصادقة الإدارة، تُرفض الجلسات مغلقًا.
+- طلبات المعاينة تحمل الحالة `preview` ولا تُحتسب مدفوعة أو إيرادًا حقيقيًا.
+- Webhooks معطّلة برد `503` حتى تُنفّذ مراجعة توقيع رسمية خاصة بكل مزود.
+- وضع `PAYMENT_MODE=live` لا يتيح التحصيل؛ مسار الدفع الحقيقي يرجع `501` إلى أن يكتمل تكامل المزود الرسمي.
+- لا تضع مفاتيح API أو كلمات المرور أو أسرار الجلسات في GitHub.
 
-## الحالة الحالية
-وضع المعاينة مفعّل بحسب التوثيق الحالي. هذا المستودع **ليس دليلًا على أن عمليات الدفع الحقيقية مفعلة أو معتمدة لدى مزودي الدفع**. لا تعتمد عليه لتحصيل أموال فعلية قبل إكمال مفاتيح التاجر واختبارات sandbox والتحقق من webhooks.
+### التشغيل والاختبارات
+```bash
+npm install
+npm test
+npm start
+```
 
-## ما يتضمنه التصميم
-- إعدادات خادم لمزودي الدفع.
-- تقييد CORS عبر `ALLOWED_ORIGIN`.
-- Helmet وتحديد معدل الطلبات.
-- التحقق من المدخلات باستخدام Zod.
-- مراعاة تكرار إشعارات webhooks عند تحديث حالة الطلب.
+يستخدم الاختبار `node --test` ولا يحتاج إلى مفاتيح مزود دفع حقيقية. استخدم بيانات اختبار فقط.
 
-## قائمة ما قبل الإنتاج
-1. توفير مفاتيح sandbox أو الإنتاج من حساب التاجر الرسمي.
-2. ضبط رموز Tamara ومفاتيح الإشعارات وفق متطلبات الحساب.
-3. التحقق من توقيع ومصادقة webhooks حسب الوثائق الرسمية لكل مزود.
-4. ضبط عناوين HTTPS العامة.
-5. اختبار حالات الموافقة والرفض والتفويض والتحصيل والإلغاء والاسترداد والانتهاء.
-6. عدم تعيين الطلب إلى PAID اعتمادًا على تحويل المتصفح وحده؛ يجب التحقق من حدث مزود موثوق.
-7. تفعيل وضع الإنتاج فقط بعد مراجعة أمنية واختبار ناجح.
+### متطلبات ما قبل الإنتاج
+1. إكمال تكامل رسمي لكل مزود مع توقيع Webhook موثّق.
+2. التحقق من كل انتقال حالة من إشعار موثوق من المزود، لا من تحويل المتصفح.
+3. اختبار تدفقات sandbox: الموافقة، الرفض، التفويض، التحصيل، الإلغاء والاسترداد.
+4. مراجعة نطاقات العودة وCORS والحد من المعدل.
+5. اختيار تخزين دائم وموثوق للطلبات والأحداث؛ التخزين الحالي في الذاكرة يضيع عند إعادة التشغيل.
+6. لا تغيّر `PAYMENT_MODE` إلى `live` قبل إتمام هذه المتطلبات.
 
-## التشغيل والأمان
-راجع `package.json` وملفات الإعداد لمعرفة أوامر التشغيل الفعلية. لا تضع مفاتيح API أو كلمات مرور أو بيانات شخصية داخل GitHub. استخدم متغيرات بيئة في منصة الاستضافة.
+## English
 
-## الملكية
-M5mOsH
+**Status:** prototype in `preview` mode only. This repository does not prove that real payments are enabled or certified by Tabby or Tamara.
+
+### Current safeguards
+- Admin authentication uses `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, and `ADMIN_SESSION_SECRET`.
+- If any required admin-auth variable is missing, sessions fail closed.
+- Preview orders use status `preview` and are not counted as paid orders or real revenue.
+- Webhooks return `503` until provider-specific official signature verification is implemented.
+- `PAYMENT_MODE=live` does not enable collection; the live checkout path returns `501` until official provider integration is complete.
+- Never commit API keys, passwords, or session secrets to GitHub.
+
+### Run and test
+```bash
+npm install
+npm test
+npm start
+```
+
+Tests use Node's built-in `node --test` runner and require no real provider credentials. Use test data only.
+
+### Production requirements
+1. Implement an official integration for each provider with documented webhook signature verification.
+2. Only transition order state from verified provider events, never from browser redirects alone.
+3. Test sandbox approval, decline, authorization, capture, cancellation, and refund flows.
+4. Review return URL allow-lists, CORS, and rate limiting.
+5. Choose durable storage for orders and events; current in-memory storage is lost on restart.
+6. Do not set `PAYMENT_MODE=live` until these requirements are complete.
+
+## بصمة المشروع | Project fingerprint
+- Owner: Ahmed jafari
+- Signature / rights tag: M5mOsH
+- Contact: +99507190799

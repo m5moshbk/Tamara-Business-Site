@@ -32,3 +32,20 @@
 
 ## الملكية
 M5mOsH
+
+
+---
+
+# English Guide
+
+This repository describes a prototype server-side payment gateway flow for Tabby and Tamara, including order-state handling and a dashboard. Documentation and a deployed preview do not mean a merchant account is approved or live payments are enabled.
+
+## Production readiness checklist
+1. Use official merchant credentials and sandbox environments first.
+2. Configure secrets in the hosting platform, never in Git.
+3. Verify webhook signatures and authentication according to each provider's official requirements.
+4. Test authorization, capture, rejection, cancellation, refund, expiry, retries, and duplicate webhook delivery.
+5. Never mark an order as paid based only on browser redirects; verify a trusted provider event server-side.
+6. Switch to production only after security review and successful end-to-end tests.
+
+Review `package.json` and runtime configuration for the actual build and start commands. Do not accept real payments until the integration and merchant configuration have been independently verified.

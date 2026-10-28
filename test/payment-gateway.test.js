@@ -47,7 +47,8 @@ test("public health endpoint returns only minimal status", async () => {
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.ok, true);
-  assert.equal(body.database_ok, true);
+  assert.equal(body.service, "beefitness-payments");
+  assert.equal(body.mode, "preview");
   assert.equal("ADMIN_SESSION_SECRET" in body, false);
 });
 

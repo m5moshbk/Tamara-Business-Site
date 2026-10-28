@@ -12,7 +12,7 @@ delete process.env.ADMIN_SESSION_SECRET;
 const missingConfig = await import("../server.js?ci-missing-auth");
 const missingServer = missingConfig.app.listen(0, "127.0.0.1");
 await once(missingServer, "listening");
-const missingBase = \`http://127.0.0.1:\${missingServer.address().port}\`;
+const missingBase = `http://127.0.0.1:${missingServer.address().port}`;
 
 const salt = Buffer.from("ci-only-salt");
 const passwordHash = crypto.scryptSync("ci-only-password", salt, 64, {
@@ -20,13 +20,13 @@ const passwordHash = crypto.scryptSync("ci-only-password", salt, 64, {
 }).toString("base64url");
 process.env.ADMIN_USERNAME = "ci-admin";
 process.env.ADMIN_PASSWORD_HASH =
-  \`scrypt$16384$8$1$\${salt.toString("base64url")}$\${passwordHash}\`;
+  `scrypt$16384$8$1$${salt.toString("base64url")}$${passwordHash}`;
 process.env.ADMIN_SESSION_SECRET = "ci-only-session-secret-long-enough-for-tests";
 
 const validConfig = await import("../server.js?ci-valid-auth");
 const validServer = validConfig.app.listen(0, "127.0.0.1");
 await once(validServer, "listening");
-const validBase = \`http://127.0.0.1:\${validServer.address().port}\`;
+const validBase = `http://127.0.0.1:${validServer.address().port}`;
 
 async function postJson(base, path, body, headers = {}) {
   return fetch(base + path, {
@@ -59,7 +59,7 @@ test("missing auth configuration rejects forged empty-secret session cookies", a
   const signature = crypto.createHmac("sha256", "").update(payload).digest("base64url");
 
   const response = await fetch(missingBase + "/api/stats", {
-    headers: { Cookie: \`bf_admin=\${payload}.\${signature}\` }
+    headers: { Cookie: `bf_admin=${payload}.${signature}` }
   });
   assert.equal(response.status, 401);
 });

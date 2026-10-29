@@ -134,7 +134,7 @@ function verifyTamaraJwt(token, secret) {
 function getTamaraWebhookToken(req) {
   const queryToken = typeof req.query.tamaraToken === "string" ? req.query.tamaraToken : null;
   const auth = req.get("authorization") || "";
-  const match = auth.match(/^Bearer\\s+(.+)$/i);
+  const match = auth.match(/^Bearer\s+(.+)$/i);
   const headerToken = match ? match[1] : null;
   if (queryToken && headerToken && queryToken !== headerToken) return null;
   return queryToken || headerToken;

@@ -8,6 +8,9 @@ const app = express();
 const PORT = Number(process.env.PORT || 10000);
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://beefitness.com.sa";
 const MODE = process.env.PAYMENT_MODE || "preview";
+const TAMARA_API_TOKEN = process.env.TAMARA_API_TOKEN || "";
+const TAMARA_NOTIFICATION_TOKEN = process.env.TAMARA_NOTIFICATION_TOKEN || "";
+const TAMARA_BASE_URL = MODE === "live" ? "https://api.tamara.co" : "https://api-sandbox.tamara.co";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "";
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || "";
 const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || "";
@@ -84,8 +87,7 @@ function signSession(payload) {
 }
 
 function readSession(req) {
-  // Fail closed if the authentication configuration is incomplete. Without this
-  // guard, an empty session secret could let an attacker forge an HMAC cookie.
+  // Fail closed if any required authentication setting is missing.
   if (!ADMIN_USERNAME || !ADMIN_PASSWORD_HASH || !ADMIN_SESSION_SECRET) return null;
   const raw = req.headers.cookie?.split(";").map(x => x.trim()).find(x => x.startsWith("bf_admin="))?.slice(9);
   if (!raw) return null;
@@ -107,6 +109,39 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function verifyTamaraJwt(token, secret) {
+  if (!token || !secret) return false;
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+    const [headerPart, payloadPart, signaturePart] = parts;
+    const header = JSON.parse(Buffer.from(headerPart, "base64url").toString("utf8"));
+    const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
+    if (header.alg !== "HS256") return false;
+
+    const expected = crypto.createHmac("sha256", secret)
+      .update(headerPart + "." + payloadPart).digest();
+    const actual = Buffer.from(signaturePart, "base64url");
+    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return false;
+
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp != null && now >= Number(payload.exp)) return false;
+    if (payload.nbf != null && now < Number(payload.nbf)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getTamaraWebhookToken(req) {
+  const queryToken = typeof req.query.tamaraToken === "string" ? req.query.tamaraToken : null;
+  const auth = req.get("authorization") || "";
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  const headerToken = match ? match[1] : null;
+  if (queryToken && headerToken && queryToken !== headerToken) return null;
+  return queryToken || headerToken;
+}
+
 function stats() {
   const a = [...orders.values()];
   const p = a.filter(o => ["paid", "captured", "authorised"].includes(o.status));
@@ -126,6 +161,54 @@ function stats() {
 app.get("/health", (req, res) =>
   res.json({ ok: true, service: "beefitness-payments", mode: MODE, time: new Date().toISOString() })
 );
+
+/**
+ * Read-only credential diagnostic. Requires an authenticated admin session.
+ * A fixed, non-existent UUID is used only for GET; no order is created or changed.
+ * Never returns or logs credential values.
+ */
+app.get("/api/admin/tamara/credentials-check", requireAdmin, async (req, res) => {
+  const result = {
+    mode: MODE,
+    apiToken: TAMARA_API_TOKEN ? "configured_not_exposed" : "missing",
+    notificationToken: TAMARA_NOTIFICATION_TOKEN ? "configured_not_exposed" : "missing",
+    apiValidation: "not_tested",
+    notificationValidation: "cannot_confirm_without_Tamara_signed_notification"
+  };
+
+  if (TAMARA_API_TOKEN) {
+    try {
+      const response = await fetch(
+        TAMARA_BASE_URL + "/orders/00000000-0000-4000-8000-000000000000",
+        {
+          method: "GET",
+          headers: {
+            "Authorization": "Bearer " + TAMARA_API_TOKEN,
+            "Accept": "application/json"
+          },
+          signal: AbortSignal.timeout(10000)
+        }
+      );
+
+      if (response.status === 200) {
+        result.apiValidation = "accepted_by_Tamara";
+      } else if (response.status === 401 || response.status === 403) {
+        result.apiValidation = "rejected_by_Tamara";
+      } else if (response.status === 404) {
+        result.apiValidation = "likely_accepted_order_not_found";
+      } else {
+        result.apiValidation = "inconclusive_http_" + response.status;
+      }
+    } catch (error) {
+      result.apiValidation = error?.name === "TimeoutError"
+        ? "timeout"
+        : "network_error";
+    }
+  }
+
+  res.setHeader("Cache-Control", "no-store");
+  res.json(result);
+});
 
 app.post("/api/admin/login", loginLimiter, (req, res) => {
   const schema = z.object({

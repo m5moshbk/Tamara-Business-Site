@@ -1,0 +1,31 @@
+name: Payment Gateway Security Tests
+
+on:
+  push:
+    branches:
+      - fix/tabby-webhook-fail-closed-20261102
+  pull_request:
+    paths:
+      - "server.js"
+      - "test/**"
+      - "package.json"
+      - ".github/workflows/tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --no-package-lock --no-audit --no-fund
+      - name: Run payment gateway security tests
+        run: npm test

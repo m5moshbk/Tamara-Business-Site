@@ -58,7 +58,5 @@ Tests use Node's built-in `node --test` runner and require no real provider cred
 5. Choose durable storage for orders and events; current in-memory storage is lost on restart.
 6. Do not set `PAYMENT_MODE=live` until these requirements are complete.
 
-## بصمة المشروع | Project fingerprint
-- Owner: Ahmed jafari
-- Signature / rights tag: M5mOsH
-- Contact: +99507190799
+## الملكية | Rights
+© M5mOsH All Rights Reserved

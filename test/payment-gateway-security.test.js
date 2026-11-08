@@ -33,7 +33,7 @@ test("checkout rejects client-submitted totals and Tabby webhook remains fail-cl
  assert.equal(checkout.status,400);
  const webhook=await post(noAuthBase,"/webhooks/tabby",{event_type:"paid",order_reference_id:"forged"});
  assert.equal(webhook.status,503);
- assert.equal((await webhook.json()).error,"WEBHOOK_SIGNATURE_VERIFICATION_NOT_CONFIGURED");
+ assert.equal((await webhook.json()).error,"SANDBOX_MODE_REQUIRED");
  assert.equal(noAuth.stats().totalOrders,0);
 });
 

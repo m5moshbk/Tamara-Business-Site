@@ -13,6 +13,7 @@ test("checkout idempotency returns the original order",async()=>{
  const input={provider:"tamara",items:[{productId:product.id,quantity:2}],customer:{name:"Test User",email:"test@example.invalid",phone:"0500000000"},idempotencyKey:"unit-test-idempotency-0001"};
  const first=await repo.createOrder(input),second=await repo.createOrder(input);
  assert.equal(first.id,second.id);assert.equal(second.amountHalalas,3998);
+ await assert.rejects(()=>repo.createOrder({...input,items:[{productId:product.id,quantity:1}]}),/IDEMPOTENCY_KEY_REUSED/);
 });
 test("verified event transitions are monotonic and duplicate events are idempotent",async()=>{
  const repo=createStoreRepository();
@@ -26,4 +27,8 @@ test("verified event transitions are monotonic and duplicate events are idempote
  assert.equal(stale.status,"authorised");
  const duplicate=await repo.recordWebhook({provider:"tamara",eventId:"evt-authorised",eventType:"order_authorised",payload:{},referenceId:order.referenceId,status:"authorised"});
  assert.equal(duplicate.duplicate,true);
+ const failed=await repo.recordWebhook({provider:"tamara",eventId:"evt-failed",eventType:"order_declined",payload:{},referenceId:order.referenceId,status:"failed"});
+ assert.equal(failed.status,"failed");
+ const late=await repo.recordWebhook({provider:"tamara",eventId:"evt-late-captured",eventType:"order_captured",payload:{},referenceId:order.referenceId,status:"captured"});
+ assert.equal(late.status,"failed");
 });

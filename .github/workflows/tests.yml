@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/tabby-webhook-fail-closed-20261102
+      - feat/beefitness-full-store-20261108
   pull_request:
     paths:
       - "server.js"
@@ -27,5 +28,7 @@ jobs:
           node-version: "22"
       - name: Install dependencies
         run: npm install --no-package-lock --no-audit --no-fund
+      - name: Check JavaScript syntax
+        run: npm run check
       - name: Run payment gateway security tests
         run: npm test

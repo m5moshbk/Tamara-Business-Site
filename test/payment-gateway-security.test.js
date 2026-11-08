@@ -5,6 +5,8 @@ import {once} from "node:events";
 
 process.env.NODE_ENV="test";
 process.env.PAYMENT_MODE="preview";
+process.env.STORE_PERSISTENCE="memory";
+delete process.env.DATABASE_URL;
 delete process.env.ADMIN_USERNAME;delete process.env.ADMIN_PASSWORD_HASH;delete process.env.ADMIN_SESSION_SECRET;delete process.env.TAMARA_NOTIFICATION_TOKEN;
 const noAuth=await import("../server.js?ci-no-auth");
 const noAuthServer=noAuth.app.listen(0,"127.0.0.1");await once(noAuthServer,"listening");
@@ -51,10 +53,12 @@ test("admin login unlocks product catalog management",async()=>{
 test("checkout calculates total from server catalog and ignores client amount",async()=>{
  const products=await fetch(authBase+"/api/admin/products",{headers:{Cookie:adminCookie}}).then(r=>r.json());
  const product=products.find(p=>p.sku==="CI-001");assert.ok(product);
- const checkout=await post(authBase,"/api/checkout",{provider:"tamara",items:[{productId:product.id,quantity:2}],customer:{name:"CI Test",email:"ci@example.invalid",phone:"0500000000"},amount:1,returnPath:"//evil.invalid"});
+ const checkout=await post(authBase,"/api/checkout",{provider:"tamara",items:[{productId:product.id,quantity:2}],customer:{name:"CI Test",email:"ci@example.invalid",phone:"0500000000"},amount:1,returnPath:"//evil.invalid"},{"Idempotency-Key":"ci-checkout-attempt-0001"});
  assert.equal(checkout.status,201);const data=await checkout.json();
  assert.equal(data.totalHalalas,25000);assert.equal(data.preview,true);assert.match(data.checkoutUrl,/^\/\?payment=preview/);
  assert.equal(auth.orders.get(data.orderId).amount,250);
+ const retry=await post(authBase,"/api/checkout",{provider:"tamara",items:[{productId:product.id,quantity:2}],customer:{name:"CI Test",email:"ci@example.invalid",phone:"0500000000"}},{"Idempotency-Key":"ci-checkout-attempt-0001"});
+ assert.equal(retry.status,201);assert.equal((await retry.json()).orderId,data.orderId);
  const quote=await post(authBase,"/api/cart/quote",{items:[{productId:product.id,quantity:4}]});
  assert.equal(quote.status,409);
 });

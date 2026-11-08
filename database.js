@@ -9,6 +9,7 @@ const productFromRow = r => ({
   stock:Number(r.stock), imageUrl:r.image_url || null, active:Boolean(r.active),
   createdAt:r.created_at, updatedAt:r.updated_at
 });
+const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])])) : value;
 const orderFromRow = r => ({
   id:r.id, referenceId:r.reference_id, provider:r.provider || null,
   amount:Number(r.total_halalas)/100, amountHalalas:Number(r.total_halalas), currency:r.currency,
@@ -39,12 +40,17 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
       },
       async getProduct(productId){return products.get(productId)||null;},
       async createOrder({provider,items,customer,idempotencyKey}){
-        if(idempotencyKey && idempotency.has(idempotencyKey))return orders.get(idempotency.get(idempotencyKey));
+        const requestHash=crypto.createHash("sha256").update(JSON.stringify(canonical({provider,items,customer}))).digest("hex");
+        if(idempotencyKey && idempotency.has(idempotencyKey)){
+          const prior=idempotency.get(idempotencyKey);
+          if(prior.requestHash!==requestHash)throw Object.assign(new Error("IDEMPOTENCY_KEY_REUSED"),{code:"IDEMPOTENCY_KEY_REUSED"});
+          return orders.get(prior.orderId);
+        }
         const lines=[];
         for(const item of items){const p=products.get(item.productId);if(!p||!p.active)throw Object.assign(new Error("PRODUCT_UNAVAILABLE"),{code:"PRODUCT_UNAVAILABLE",productId:item.productId});if(item.quantity>p.stock)throw Object.assign(new Error("INSUFFICIENT_STOCK"),{code:"INSUFFICIENT_STOCK",productId:item.productId});lines.push({productId:p.id,name:p.name,sku:p.sku,quantity:item.quantity,unitPriceHalalas:p.priceHalalas,lineTotalHalalas:p.priceHalalas*item.quantity});}
         const totalHalalas=lines.reduce((s,x)=>s+x.lineTotalHalalas,0),orderId=crypto.randomUUID(),referenceId="BF-"+crypto.randomBytes(6).toString("hex").toUpperCase(),now=new Date().toISOString();
         const order={id:orderId,referenceId,provider,amount:totalHalalas/100,amountHalalas:totalHalalas,currency:"SAR",items:lines,customer,status:"preview_only",createdAt:now,updatedAt:now,providerOrderId:null};
-        orders.set(orderId,order);if(idempotencyKey)idempotency.set(idempotencyKey,orderId);return order;
+        orders.set(orderId,order);if(idempotencyKey)idempotency.set(idempotencyKey,{orderId,requestHash});return order;
       },
       async listOrders(limit=100){return [...orders.values()].sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit);},
       async stats(){
@@ -99,9 +105,13 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
     },
     async getProduct(productId){const r=await pool.query(productSelect+" WHERE p.id=$1",[productId]);return r.rowCount?productFromRow(r.rows[0]):null;},
     async createOrder({provider,items,customer,idempotencyKey}){
+      const requestHash=crypto.createHash("sha256").update(JSON.stringify(canonical({provider,items,customer}))).digest("hex");
       const client=await pool.connect();try{await client.query("BEGIN");
-        const existing=await client.query("SELECT o.*,pa.provider FROM bf_payment_attempts pa JOIN bf_orders o ON o.id=pa.order_id WHERE pa.idempotency_key=$1 FOR UPDATE",[idempotencyKey]);
-        if(existing.rowCount){await client.query("COMMIT");return orderFromRow(existing.rows[0]);}
+        const existing=await client.query("SELECT o.*,pa.provider,pa.request_hash FROM bf_payment_attempts pa JOIN bf_orders o ON o.id=pa.order_id WHERE pa.idempotency_key=$1 FOR UPDATE",[idempotencyKey]);
+        if(existing.rowCount){
+          if(existing.rows[0].request_hash!==requestHash)throw Object.assign(new Error("IDEMPOTENCY_KEY_REUSED"),{code:"IDEMPOTENCY_KEY_REUSED"});
+          await client.query("COMMIT");return orderFromRow(existing.rows[0]);
+        }
         const lines=[];
         for(const item of items){
           const r=await client.query("SELECT id,sku,name,price_halalas,stock,active FROM bf_products WHERE id=$1 FOR UPDATE",[item.productId]);
@@ -113,7 +123,7 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
         const inserted=await client.query("INSERT INTO bf_orders(reference_id,customer_name,customer_email,customer_phone,subtotal_halalas,shipping_halalas,total_halalas,status) VALUES($1,$2,$3,$4,$5,0,$5,'preview_only') RETURNING *",[referenceId,customer.name,customer.email,customer.phone,total]);
         const order=orderFromRow({...inserted.rows[0],provider});
         for(const line of lines)await client.query("INSERT INTO bf_order_items(order_id,product_id,product_name_snapshot,sku_snapshot,quantity,unit_price_halalas,line_total_halalas) VALUES($1,$2,$3,$4,$5,$6,$7)",[order.id,line.productId,line.name,line.sku,line.quantity,line.unitPriceHalalas,line.lineTotalHalalas]);
-        await client.query("INSERT INTO bf_payment_attempts(order_id,provider,status,idempotency_key) VALUES($1,$2,'preview_only',$3)",[order.id,provider,idempotencyKey]);
+        await client.query("INSERT INTO bf_payment_attempts(order_id,provider,status,idempotency_key,request_hash) VALUES($1,$2,'preview_only',$3,$4)",[order.id,provider,idempotencyKey,requestHash]);
         await client.query("COMMIT");return {...order,provider,items:lines};
       }catch(e){await client.query("ROLLBACK");throw e;}finally{client.release();}
     },

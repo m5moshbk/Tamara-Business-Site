@@ -7,7 +7,7 @@ import { attachStoreRoutes } from "./store.js";
 import { createStoreRepository } from "./database.js";
 import { verifyTabbyWebhook } from "./payments/tabby.js";
 import { createAuditLogger } from "./platform/audit-log.js";
-import { hasPermission, isKnownRole } from "./platform/access-control.js";
+import { createPermissionMiddleware, isKnownRole } from "./platform/access-control.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -123,17 +123,12 @@ function readSession(req) {
   }
 }
 
-function requireAdmin(req, res, next) {
-  const session = readSession(req);
-  if (!session) return res.status(401).json({ error: "ADMIN_AUTH_REQUIRED" });
-  if (!hasPermission(session.role, "catalog:manage")) return res.status(403).json({ error: "PERMISSION_DENIED" });
-  req.auth = session;
-  next();
-}
+const requireAdmin = createPermissionMiddleware(readSession, "catalog:manage");
+const requireAuditRead = createPermissionMiddleware(readSession, "audit:read");
 
 attachStoreRoutes(app, { requireAdmin, repository, auditLog });
 
-app.get("/api/admin/audit-events", requireAdmin, (req, res) => {
+app.get("/api/admin/audit-events", requireAuditRead, (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json({ storage: auditLog.storage, events: auditLog.list({ limit: 100 }) });
 });

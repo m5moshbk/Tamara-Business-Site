@@ -1,0 +1,29 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+process.env.STORE_PERSISTENCE="memory";
+delete process.env.DATABASE_URL;
+const {createStoreRepository}=await import("../database.js");
+test("DATABASE_URL alone never enables PostgreSQL",async()=>{
+ const repo=createStoreRepository({connectionString:"postgres://not-used.invalid/db"});
+ assert.equal(repo.mode,"memory");
+});
+test("checkout idempotency returns the original order",async()=>{
+ const repo=createStoreRepository();
+ const product=await repo.createProduct({name:"Unit Test Product",description:"",category:"Tests",priceHalalas:1999,stock:4,active:true,sku:"UT-1"});
+ const input={provider:"tamara",items:[{productId:product.id,quantity:2}],customer:{name:"Test User",email:"test@example.invalid",phone:"0500000000"},idempotencyKey:"unit-test-idempotency-0001"};
+ const first=await repo.createOrder(input),second=await repo.createOrder(input);
+ assert.equal(first.id,second.id);assert.equal(second.amountHalalas,3998);
+});
+test("verified event transitions are monotonic and duplicate events are idempotent",async()=>{
+ const repo=createStoreRepository();
+ const product=await repo.createProduct({name:"Webhook Product",description:"",category:"Tests",priceHalalas:5000,stock:2,active:true,sku:"WH-1"});
+ const order=await repo.createOrder({provider:"tamara",items:[{productId:product.id,quantity:1}],customer:{name:"Test User",email:"test@example.invalid",phone:"0500000000"},idempotencyKey:"webhook-order-idempotency-0001"});
+ const approved=await repo.recordWebhook({provider:"tamara",eventId:"evt-approved",eventType:"order_approved",payload:{},referenceId:order.referenceId,status:"approved"});
+ assert.equal(approved.status,"approved");
+ const authorised=await repo.recordWebhook({provider:"tamara",eventId:"evt-authorised",eventType:"order_authorised",payload:{},referenceId:order.referenceId,status:"authorised"});
+ assert.equal(authorised.status,"authorised");
+ const stale=await repo.recordWebhook({provider:"tamara",eventId:"evt-stale",eventType:"order_approved",payload:{},referenceId:order.referenceId,status:"approved"});
+ assert.equal(stale.status,"authorised");
+ const duplicate=await repo.recordWebhook({provider:"tamara",eventId:"evt-authorised",eventType:"order_authorised",payload:{},referenceId:order.referenceId,status:"authorised"});
+ assert.equal(duplicate.duplicate,true);
+});

@@ -17,8 +17,9 @@ const orderFromRow = r => ({
 });
 
 export function createStoreRepository({connectionString=process.env.DATABASE_URL,pool:providedPool=null}={}) {
-  if (!connectionString && !providedPool) {
-    const products=new Map(),categories=new Set(),orders=new Map();
+  // PostgreSQL is opt-in; DATABASE_URL alone never triggers a connection.
+  if (process.env.STORE_PERSISTENCE !== "postgres" || (!connectionString && !providedPool)) {
+    const products=new Map(),categories=new Set(),orders=new Map(),idempotency=new Map(),webhookEvents=new Set();
     return {
       mode:"memory",products,categories,orders,
       async listProducts({admin=false,q="",category=""}={}) {
@@ -37,17 +38,29 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
         const p={...old,...patch,updatedAt:new Date().toISOString()};products.set(p.id,p);categories.add(p.category);return p;
       },
       async getProduct(productId){return products.get(productId)||null;},
-      async createOrder({provider,items,customer}){
+      async createOrder({provider,items,customer,idempotencyKey}){
+        if(idempotencyKey && idempotency.has(idempotencyKey))return orders.get(idempotency.get(idempotencyKey));
         const lines=[];
         for(const item of items){const p=products.get(item.productId);if(!p||!p.active)throw Object.assign(new Error("PRODUCT_UNAVAILABLE"),{code:"PRODUCT_UNAVAILABLE",productId:item.productId});if(item.quantity>p.stock)throw Object.assign(new Error("INSUFFICIENT_STOCK"),{code:"INSUFFICIENT_STOCK",productId:item.productId});lines.push({productId:p.id,name:p.name,sku:p.sku,quantity:item.quantity,unitPriceHalalas:p.priceHalalas,lineTotalHalalas:p.priceHalalas*item.quantity});}
         const totalHalalas=lines.reduce((s,x)=>s+x.lineTotalHalalas,0),orderId=crypto.randomUUID(),referenceId="BF-"+crypto.randomBytes(6).toString("hex").toUpperCase(),now=new Date().toISOString();
         const order={id:orderId,referenceId,provider,amount:totalHalalas/100,amountHalalas:totalHalalas,currency:"SAR",items:lines,customer,status:"preview_only",createdAt:now,updatedAt:now,providerOrderId:null};
-        orders.set(orderId,order);return order;
+        orders.set(orderId,order);if(idempotencyKey)idempotency.set(idempotencyKey,orderId);return order;
       },
       async listOrders(limit=100){return [...orders.values()].sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit);},
       async stats(){
         const all=[...orders.values()],paid=all.filter(o=>["captured","closed"].includes(o.status));
         return {totalOrders:all.length,paidOrders:paid.length,pending:all.filter(o=>["pending","preview_only"].includes(o.status)).length,failed:all.filter(o=>o.status==="failed").length,revenue:paid.reduce((s,o)=>s+o.amount,0),providers:{tabby:all.filter(o=>o.provider==="tabby").length,tamara:all.filter(o=>o.provider==="tamara").length}};
+      },
+      async recordWebhook({provider,eventId,eventType,payload,referenceId,status}){
+        const key=provider+":"+eventId;if(webhookEvents.has(key))return {duplicate:true,found:true};
+        const order=[...orders.values()].find(o=>o.referenceId===referenceId);
+        if(!order)return {duplicate:false,found:false};
+        webhookEvents.add(key);
+        const rank={preview_only:-1,pending:0,approved:1,authorised:2,captured:3,closed:4,failed:-2};
+        if(status==="failed"){if(rank[order.status]<2)order.status="failed";}
+        else if(rank[status]>rank[order.status])order.status=status;
+        order.updatedAt=new Date().toISOString();orders.set(order.id,order);
+        return {duplicate:false,found:true,status:order.status};
       },
       async close(){}
     };
@@ -85,8 +98,10 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
       }catch(e){await client.query("ROLLBACK");throw e;}finally{client.release();}
     },
     async getProduct(productId){const r=await pool.query(productSelect+" WHERE p.id=$1",[productId]);return r.rowCount?productFromRow(r.rows[0]):null;},
-    async createOrder({provider,items,customer}){
+    async createOrder({provider,items,customer,idempotencyKey}){
       const client=await pool.connect();try{await client.query("BEGIN");
+        const existing=await client.query("SELECT o.*,pa.provider FROM bf_payment_attempts pa JOIN bf_orders o ON o.id=pa.order_id WHERE pa.idempotency_key=$1 FOR UPDATE",[idempotencyKey]);
+        if(existing.rowCount){await client.query("COMMIT");return orderFromRow(existing.rows[0]);}
         const lines=[];
         for(const item of items){
           const r=await client.query("SELECT id,sku,name,price_halalas,stock,active FROM bf_products WHERE id=$1 FOR UPDATE",[item.productId]);
@@ -111,9 +126,21 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
       const providers={tabby:0,tamara:0};for(const row of p.rows)providers[row.provider]=row.count;
       const x=r.rows[0];return {totalOrders:x.total_orders,paidOrders:x.paid_orders,pending:x.pending,failed:x.failed,revenue:Number(x.revenue)/100,providers};
     },
-    async recordWebhook({provider,eventId,eventType,payload}){
-      const r=await pool.query("INSERT INTO bf_webhook_events(provider,provider_event_id,event_type,signature_verified,payload) VALUES($1,$2,$3,TRUE,$4::jsonb) ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id",[provider,eventId,eventType,JSON.stringify(payload)]);
-      return r.rowCount===1;
+    async recordWebhook({provider,eventId,eventType,payload,referenceId,status,providerOrderId}){
+      const client=await pool.connect();try{await client.query("BEGIN");
+        const found=await client.query("SELECT o.id,o.status,pa.id AS attempt_id FROM bf_orders o JOIN bf_payment_attempts pa ON pa.order_id=o.id WHERE o.reference_id=$1 AND pa.provider=$2 FOR UPDATE",[referenceId,provider]);
+        if(!found.rowCount){await client.query("ROLLBACK");return {duplicate:false,found:false};}
+        const inserted=await client.query("INSERT INTO bf_webhook_events(provider,provider_event_id,event_type,signature_verified,payload) VALUES($1,$2,$3,TRUE,$4::jsonb) ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id",[provider,eventId,eventType,JSON.stringify(payload)]);
+        if(!inserted.rowCount){await client.query("COMMIT");return {duplicate:true,found:true,status:found.rows[0].status};}
+        const rank={pending:0,approved:1,authorised:2,captured:3,closed:4,failed:-2,preview_only:-1};
+        const current=found.rows[0].status,mayAdvance=status==="failed"?rank[current]<2:rank[status]>rank[current];
+        if(mayAdvance){
+          await client.query("UPDATE bf_orders SET status=$1,updated_at=NOW() WHERE id=$2",[status,found.rows[0].id]);
+          await client.query("UPDATE bf_payment_attempts SET status=$1,provider_order_id=COALESCE($2,provider_order_id),updated_at=NOW() WHERE id=$3",[status,providerOrderId||null,found.rows[0].attempt_id]);
+        }
+        await client.query("UPDATE bf_webhook_events SET processing_status='processed',processed_at=NOW() WHERE id=$1",[inserted.rows[0].id]);
+        await client.query("COMMIT");return {duplicate:false,found:true,status:mayAdvance?status:current};
+      }catch(e){await client.query("ROLLBACK");throw e;}finally{client.release();}
     },
     async close(){await pool.end();}
   };

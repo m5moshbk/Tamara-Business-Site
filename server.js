@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { z } from "zod";
 import { attachStoreRoutes } from "./store.js";
 import { createStoreRepository } from "./database.js";
+import { verifyTabbyWebhook } from "./payments/tabby.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -12,6 +13,8 @@ const ORIGIN = process.env.ALLOWED_ORIGIN || "https://beefitness.com.sa";
 const MODE = process.env.PAYMENT_MODE || "preview";
 const TAMARA_API_TOKEN = process.env.TAMARA_API_TOKEN || "";
 const TAMARA_NOTIFICATION_TOKEN = process.env.TAMARA_NOTIFICATION_TOKEN || "";
+const TABBY_WEBHOOK_HEADER_NAME = process.env.TABBY_WEBHOOK_HEADER_NAME || "";
+const TABBY_WEBHOOK_HEADER_VALUE = process.env.TABBY_WEBHOOK_HEADER_VALUE || "";
 const TAMARA_BASE_URL = MODE === "live" ? "https://api.tamara.co" : "https://api-sandbox.tamara.co";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "";
 const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || "";
@@ -274,6 +277,7 @@ app.post("/webhooks/tamara", async (req, res, next) => {
   if (!token || !TAMARA_NOTIFICATION_TOKEN || !verifyTamaraJwt(token, TAMARA_NOTIFICATION_TOKEN)) {
     return res.status(401).json({ error: "INVALID_TAMARA_WEBHOOK_SIGNATURE" });
   }
+  if (MODE !== "sandbox") return res.status(503).json({ error: "SANDBOX_MODE_REQUIRED" });
   if (repository.mode !== "postgres") {
     return res.status(503).json({ error: "PERSISTENT_STORAGE_REQUIRED_FOR_WEBHOOKS" });
   }
@@ -297,7 +301,23 @@ app.post("/webhooks/tamara", async (req, res, next) => {
     return res.status(200).json({ok:true,duplicate:Boolean(result.duplicate),status:result.status});
   } catch(error) { return next(error); }
 });
-app.post("/webhooks/tabby", (req, res) => recordWebhook("tabby", req, res));
+app.post("/webhooks/tabby", async (req,res,next)=>{
+  if(MODE!=="sandbox")return res.status(503).json({error:"SANDBOX_MODE_REQUIRED"});
+  if(!TABBY_WEBHOOK_HEADER_NAME||!TABBY_WEBHOOK_HEADER_VALUE)return res.status(503).json({error:"TABBY_WEBHOOK_AUTH_NOT_CONFIGURED"});
+  if(!verifyTabbyWebhook({headerName:TABBY_WEBHOOK_HEADER_NAME,secret:TABBY_WEBHOOK_HEADER_VALUE,providedValue:req.get(TABBY_WEBHOOK_HEADER_NAME)}))return res.status(401).json({error:"INVALID_TABBY_WEBHOOK_SIGNATURE"});
+  if(repository.mode!=="postgres")return res.status(503).json({error:"PERSISTENT_STORAGE_REQUIRED_FOR_WEBHOOKS"});
+  const body=req.body||{},referenceId=body.order?.reference_id;
+  if(typeof referenceId!=="string"||typeof body.id!=="string")return res.status(400).json({error:"INVALID_TABBY_EVENT"});
+  const statusMap={authorized:"authorised",closed:"closed",rejected:"failed",expired:"failed"};
+  const nextStatus=statusMap[String(body.status||"").toLowerCase()];
+  if(!nextStatus)return res.status(200).json({ok:true,ignored:true});
+  const eventId=crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  try{
+    const result=await repository.recordWebhook({provider:"tabby",eventId,eventType:String(body.status).toLowerCase(),payload:body,referenceId,status:nextStatus,providerPaymentId:body.id});
+    if(!result.found)return res.status(404).json({error:"ORDER_NOT_FOUND"});
+    return res.status(200).json({ok:true,duplicate:Boolean(result.duplicate),status:result.status});
+  }catch(error){return next(error);}
+});
 
 app.use((req, res) => res.sendFile(process.cwd() + "/public/index.html"));
 if (process.env.NODE_ENV !== "test") {

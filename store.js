@@ -40,5 +40,5 @@ export function attachStoreRoutes(app,{requireAdmin,repository}) {
   const path=parsed.data.returnPath.startsWith("/")&&!parsed.data.returnPath.startsWith("//")?parsed.data.returnPath:"/";
   const checkoutUrl=path+(path.includes("?")?"&":"?")+"payment=preview&order="+encodeURIComponent(order.id);
   res.status(201).json({orderId:order.id,referenceId:order.referenceId,checkoutUrl,status:"preview_only",currency:"SAR",totalHalalas:order.amountHalalas,preview:true,message:"معاينة فقط؛ لم يتم إنشاء جلسة لدى مزود الدفع ولم يتم تحصيل أي مبلغ."});
- }catch(e){if(["PRODUCT_UNAVAILABLE","INSUFFICIENT_STOCK"].includes(e.code))return res.status(e.code==="INSUFFICIENT_STOCK"?409:400).json({error:e.code,productId:e.productId});next(e);}});
+ }catch(e){if(e.code==="IDEMPOTENCY_KEY_REUSED")return res.status(409).json({error:e.code});if(["PRODUCT_UNAVAILABLE","INSUFFICIENT_STOCK"].includes(e.code))return res.status(e.code==="INSUFFICIENT_STOCK"?409:400).json({error:e.code,productId:e.productId});next(e);}});
 }

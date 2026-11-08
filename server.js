@@ -6,6 +6,8 @@ import { z } from "zod";
 import { attachStoreRoutes } from "./store.js";
 import { createStoreRepository } from "./database.js";
 import { verifyTabbyWebhook } from "./payments/tabby.js";
+import { createAuditLogger } from "./platform/audit-log.js";
+import { hasPermission, isKnownRole } from "./platform/access-control.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -54,6 +56,7 @@ app.get("/dashboard", (req, res) => { if (!readSession(req)) return res.redirect
 app.use(express.static("public"));
 
 const repository = createStoreRepository();
+const auditLog = createAuditLogger();
 const orders = repository.orders || new Map();
 const events = new Map();
 
@@ -112,18 +115,28 @@ function readSession(req) {
   try {
     const data = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     if (data.exp < Date.now() || data.u !== ADMIN_USERNAME) return null;
-    return data;
+    const role = data.role || "platform_owner";
+    if (!isKnownRole(role)) return null;
+    return { ...data, role, tenantId: data.tenantId ?? null };
   } catch {
     return null;
   }
 }
 
 function requireAdmin(req, res, next) {
-  if (!readSession(req)) return res.status(401).json({ error: "ADMIN_AUTH_REQUIRED" });
+  const session = readSession(req);
+  if (!session) return res.status(401).json({ error: "ADMIN_AUTH_REQUIRED" });
+  if (!hasPermission(session.role, "catalog:manage")) return res.status(403).json({ error: "PERMISSION_DENIED" });
+  req.auth = session;
   next();
 }
 
-attachStoreRoutes(app, { requireAdmin, repository });
+attachStoreRoutes(app, { requireAdmin, repository, auditLog });
+
+app.get("/api/admin/audit-events", requireAdmin, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ storage: auditLog.storage, events: auditLog.list({ limit: 100 }) });
+});
 
 function verifyTamaraJwt(token, secret) {
   if (!token || !secret) return false;
@@ -240,15 +253,21 @@ app.post("/api/admin/login", loginLimiter, (req, res) => {
     safeEqual(parsed.data.username, ADMIN_USERNAME) &&
     verifyPassword(parsed.data.password, ADMIN_PASSWORD_HASH);
 
-  if (!ok) return res.status(401).json({ error: "INVALID_CREDENTIALS" });
+  if (!ok) {
+    auditLog.record({ eventType: "auth.login.failed", outcome: "denied", resourceType: "session" });
+    return res.status(401).json({ error: "INVALID_CREDENTIALS" });
+  }
 
-  const token = signSession({ u: ADMIN_USERNAME, iat: Date.now(), exp: Date.now() + 8 * 60 * 60_000 });
+  auditLog.record({ eventType: "auth.login.succeeded", actorId: ADMIN_USERNAME, role: "platform_owner", outcome: "success", resourceType: "session" });
+  const token = signSession({ u: ADMIN_USERNAME, role: "platform_owner", tenantId: null, iat: Date.now(), exp: Date.now() + 8 * 60 * 60_000 });
   res.setHeader("Set-Cookie",
     "bf_admin=" + token + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800");
   res.json({ ok: true, user: ADMIN_USERNAME, expiresIn: 28800 });
 });
 
 app.post("/api/admin/logout", (req, res) => {
+  const session = readSession(req);
+  if (session) auditLog.record({ eventType: "auth.logout", actorId: session.u, role: session.role, tenantId: session.tenantId, outcome: "success", resourceType: "session" });
   res.setHeader("Set-Cookie", "bf_admin=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
   res.json({ ok: true });
 });

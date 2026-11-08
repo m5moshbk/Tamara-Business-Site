@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+
 const ALLOWED_FIELDS = Object.freeze([
   "eventType", "actorId", "role", "tenantId", "resourceType",
   "resourceId", "outcome", "requestId"

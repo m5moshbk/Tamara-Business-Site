@@ -96,3 +96,10 @@ test("permission middleware authenticates first and rejects insufficient roles",
   const allowed = invoke({ role: "platform_owner" });
   assert.equal(allowed.nextCalled, true);
 });
+
+test("audit log tenant filter returns only matching tenant events", () => {
+  const log = createAuditLogger();
+  log.record({ eventType: "tenant.updated", tenantId: tenantA });
+  log.record({ eventType: "tenant.updated", tenantId: tenantB });
+  assert.deepEqual(log.list({ tenantId: tenantA }).map(event => event.tenantId), [tenantA]);
+});

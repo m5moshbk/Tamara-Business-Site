@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {createTamaraSandboxSession} from "../payments/tamara.js";
-import {createTabbySandboxSession} from "../payments/tabby.js";
+import {createTabbySandboxSession,verifyTabbyWebhook} from "../payments/tabby.js";
 
 test("Tamara adapter calls the sandbox host and returns the hosted URL",async()=>{
  let request;
@@ -19,7 +19,7 @@ test("Tamara rejects incomplete payload before making a request",async()=>{
 });
 test("Tabby adapter calls Saudi API endpoint and extracts installment URL",async()=>{
  let request;
- const payload={payment:{amount:"100.00",currency:"SAR",description:"Demo order",buyer:{name:"Test Buyer",email:"test@example.invalid",phone:"0500000000"},order:{reference_id:"BF-TEST-2",items:[{title:"Demo item",quantity:1,unit_price:"100.00",category:"fitness"}]}},lang:"ar",merchant_urls:{success:"https://store.example/success",cancel:"https://store.example/cancel",failure:"https://store.example/failure"}};
+ const payload={payment:{amount:"100.00",currency:"SAR",description:"Demo order",buyer:{name:"Test Buyer",email:"test@example.invalid",phone:"0500000000"},shipping_address:{city:"Sabya",address:"Test Street",zip:"00000"},order:{reference_id:"BF-TEST-2",items:[{title:"Demo item",quantity:1,unit_price:"100.00",category:"fitness"}]}},lang:"ar",merchant_urls:{success:"https://store.example/success",cancel:"https://store.example/cancel",failure:"https://store.example/failure"}};
  const result=await createTabbySandboxSession({secretKey:"fake-tabby-key",payload,fetchImpl:async(url,options)=>{request={url,options};return {ok:true,json:async()=>({payment:{id:"tabby-test-payment",status:"created"},configuration:{available_products:{installments:[{web_url:"https://checkout.tabby.sa/session"}]}}})};}});
  assert.equal(request.url,"https://api.tabby.sa/api/v2/checkout");
  assert.equal(request.options.headers.Authorization,"Bearer fake-tabby-key");
@@ -30,4 +30,11 @@ test("Tabby refuses to call provider without a secret key",async()=>{
  let called=false;
  await assert.rejects(createTabbySandboxSession({payload:{},fetchImpl:async()=>{called=true;}}),/TABBY_SECRET_KEY_MISSING/);
  assert.equal(called,false);
+});
+
+test("Tabby webhook header verifier rejects missing and incorrect values",async()=>{
+ assert.equal(verifyTabbyWebhook({headerName:"X-Auth-Key",secret:"secret-value",providedValue:"secret-value"}),true);
+ assert.equal(verifyTabbyWebhook({headerName:"X-Auth-Key",secret:"secret-value",providedValue:"wrong-value"}),false);
+ assert.equal(verifyTabbyWebhook({headerName:"X-Auth-Key",secret:"secret-value",providedValue:null}),false);
+ assert.equal(verifyTabbyWebhook({headerName:"Bad Header",secret:"secret-value",providedValue:"secret-value"}),false);
 });

@@ -12,7 +12,7 @@ This branch contains an Arabic RTL storefront, server-priced cart, optional Post
 - Checkout remains preview-only. It does not call either provider.
 - PostgreSQL is opt-in only: both STORE_PERSISTENCE=postgres and DATABASE_URL are required. A DATABASE_URL by itself does not open a connection.
 - The migration in migrations/0001_beefitness_store.sql is a proposal. It is never applied automatically. Applying it requires a separate approval and reviewed backup/rollback plan.
-- PostgreSQL order creation uses a transaction and stores order items/payment attempts with an idempotency key. Preview checkout does not reserve/decrement stock; inventory reservation must be implemented before real payment is enabled.
+- PostgreSQL order creation uses a transaction and stores order items/payment attempts with a request fingerprint. Reusing a key with a different payload is rejected. Preview checkout does not reserve/decrement stock; inventory reservation must be implemented before real payment is enabled.
 
 ## Payment adapters
 - payments/tamara.js sends only to Tamara's documented sandbox host.

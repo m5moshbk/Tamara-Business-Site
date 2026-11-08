@@ -138,7 +138,7 @@ function verifyTamaraJwt(token, secret) {
     if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return false;
 
     const now = Math.floor(Date.now() / 1000);
-    if (payload.exp != null && now >= Number(payload.exp)) return false;
+    if (!Number.isFinite(Number(payload.exp)) || now >= Number(payload.exp)) return false;
     if (payload.nbf != null && now < Number(payload.nbf)) return false;
     return true;
   } catch {
@@ -172,7 +172,7 @@ function stats() {
 }
 
 app.get("/health", (req, res) =>
-  res.json({ ok: true, service: "beefitness-payments", mode: MODE, time: new Date().toISOString() })
+  res.json({ ok: true, service: "beefitness-payments", mode: MODE, storage: repository.mode, time: new Date().toISOString() })
 );
 
 /**
@@ -269,13 +269,33 @@ function recordWebhook(provider, req, res) {
   });
 }
 
-app.post("/webhooks/tamara", async (req, res) => {
+app.post("/webhooks/tamara", async (req, res, next) => {
   const token = getTamaraWebhookToken(req);
   if (!token || !TAMARA_NOTIFICATION_TOKEN || !verifyTamaraJwt(token, TAMARA_NOTIFICATION_TOKEN)) {
     return res.status(401).json({ error: "INVALID_TAMARA_WEBHOOK_SIGNATURE" });
   }
-  // Verified notifications are not applied until persistent reconciliation is enabled and tested.
-  return res.status(503).json({ error: "TAMARA_WEBHOOK_RECONCILIATION_NOT_ENABLED" });
+  if (repository.mode !== "postgres") {
+    return res.status(503).json({ error: "PERSISTENT_STORAGE_REQUIRED_FOR_WEBHOOKS" });
+  }
+  const body=req.body||{},referenceId=typeof body.order_reference_id==="string"?body.order_reference_id:null;
+  const providerOrderId=typeof body.order_id==="string"?body.order_id:null;
+  const eventType=String(body.event_type||"").toLowerCase();
+  const statusByEvent={
+    order_approved:"approved",order_authorised:"authorised",order_authorized:"authorised",
+    order_captured:"captured",order_declined:"failed",order_canceled:"failed",
+    order_cancelled:"failed",order_expired:"failed"
+  };
+  const nextStatus=statusByEvent[eventType];
+  if(!referenceId||!providerOrderId||!nextStatus)return res.status(400).json({error:"INVALID_TAMARA_EVENT"});
+  const eventId=req.get("x-event-id")||req.get("x-webhook-id")||
+    crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  try {
+    const result=await repository.recordWebhook({
+      provider:"tamara",eventId,eventType,payload:body,referenceId,status:nextStatus,providerOrderId
+    });
+    if(!result.found)return res.status(404).json({error:"ORDER_NOT_FOUND"});
+    return res.status(200).json({ok:true,duplicate:Boolean(result.duplicate),status:result.status});
+  } catch(error) { return next(error); }
 });
 app.post("/webhooks/tabby", (req, res) => recordWebhook("tabby", req, res));
 

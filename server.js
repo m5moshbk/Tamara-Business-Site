@@ -3,6 +3,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import crypto from "node:crypto";
 import { z } from "zod";
+import { attachStoreRoutes } from "./store.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -36,7 +37,7 @@ const loginLimiter = rateLimit({
   message: { error: "TOO_MANY_LOGIN_ATTEMPTS" }
 });
 
-app.get("/", (req, res) => res.redirect(302, ORIGIN));
+app.get("/", (_req, res) => res.sendFile(process.cwd() + "/public/store.html"));
 app.get("/login", (req, res) => {
   if (readSession(req)) return res.redirect("/dashboard");
   res.type("html").send('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BeeFitness Admin</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#080808;color:#fff;font-family:system-ui}.box{width:min(420px,calc(100% - 32px));padding:28px;border:1px solid #292929;border-radius:20px;background:#151515}input{width:100%;box-sizing:border-box;margin:8px 0 14px;padding:13px;border-radius:10px;border:1px solid #333;background:#0b0b0b;color:#fff}button{width:100%;padding:13px;border:0;border-radius:10px;font-weight:800;cursor:pointer}.muted{color:#999}.err{color:#ff8f8f;min-height:24px}</style></head><body><form class="box" id="f"><h1>BeeFitness</h1><p class="muted">دخول الإدارة — بوابة الدفع</p><label>اسم المستخدم</label><input id="u" autocomplete="username" required><label>كلمة المرور</label><input id="p" type="password" autocomplete="current-password" required><button>دخول آمن</button><div id="e" class="err"></div><small class="muted">لوحة الإدارة المحمية</small></form><script>f.onsubmit=async(e)=>{e.preventDefault();let r=await fetch("/api/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u.value,password:p.value})});if(r.ok)location.href="/dashboard";else document.querySelector("#e").textContent="بيانات الدخول غير صحيحة أو تم تجاوز المحاولات.";}</script></body></html>');
@@ -115,6 +116,8 @@ function requireAdmin(req, res, next) {
   if (!readSession(req)) return res.status(401).json({ error: "ADMIN_AUTH_REQUIRED" });
   next();
 }
+
+attachStoreRoutes(app, { requireAdmin, orders });
 
 function verifyTamaraJwt(token, secret) {
   if (!token || !secret) return false;
@@ -255,36 +258,6 @@ app.get("/api/orders", requireAdmin, (req, res) =>
   res.json([...orders.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100))
 );
 
-app.post("/api/checkout", (req, res) => {
-  const parsed = orderSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "INVALID_ORDER", details: parsed.error.issues });
-
-  const data = parsed.data;
-  const order = {
-    id: id("ord"), ...data, status: "pending",
-    createdAt: new Date().toISOString(), providerOrderId: null
-  };
-  orders.set(order.id, order);
-
-  if (MODE !== "live") {
-    order.providerOrderId = id(data.provider);
-    order.status = "preview_only";
-    order.checkoutUrl = data.returnUrl + "?payment=preview&order=" + encodeURIComponent(order.id);
-    orders.set(order.id, order);
-    return res.json({
-      orderId: order.id,
-      checkoutUrl: order.checkoutUrl,
-      status: order.status,
-      preview: true,
-      message: "Preview only. No payment was collected."
-    });
-  }
-
-  return res.status(501).json({
-    error: "LIVE_PROVIDER_NOT_CONFIGURED",
-    message: "Configure verified provider adapters and merchant credentials before enabling live mode."
-  });
-});
 
 function recordWebhook(provider, req, res) {
   // Fail closed until this provider has documented, verified signature handling.

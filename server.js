@@ -45,6 +45,8 @@ const loginLimiter = rateLimit({
 
 app.get("/", (_req, res) => res.sendFile(process.cwd() + "/public/store.html"));
 app.get("/admin/catalog", (req, res) => { if (!readSession(req)) return res.redirect("/login"); res.sendFile(process.cwd() + "/public/catalog-admin.html"); });
+// Protect the underlying static asset URL as well as the friendly admin route.
+app.get("/catalog-admin.html", (req, res) => { if (!readSession(req)) return res.redirect("/login"); res.sendFile(process.cwd() + "/public/catalog-admin.html"); });
 app.get("/login", (req, res) => {
   if (readSession(req)) return res.redirect("/dashboard");
   res.type("html").send('<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BeeFitness Admin</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#080808;color:#fff;font-family:system-ui}.box{width:min(420px,calc(100% - 32px));padding:28px;border:1px solid #292929;border-radius:20px;background:#151515}input{width:100%;box-sizing:border-box;margin:8px 0 14px;padding:13px;border-radius:10px;border:1px solid #333;background:#0b0b0b;color:#fff}button{width:100%;padding:13px;border:0;border-radius:10px;font-weight:800;cursor:pointer}.muted{color:#999}.err{color:#ff8f8f;min-height:24px}</style></head><body><form class="box" id="f"><h1>BeeFitness</h1><p class="muted">دخول الإدارة — بوابة الدفع</p><label>اسم المستخدم</label><input id="u" autocomplete="username" required><label>كلمة المرور</label><input id="p" type="password" autocomplete="current-password" required><button>دخول آمن</button><div id="e" class="err"></div><small class="muted">لوحة الإدارة المحمية</small></form><script>f.onsubmit=async(e)=>{e.preventDefault();let r=await fetch("/api/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u.value,password:p.value})});if(r.ok)location.href="/dashboard";else document.querySelector("#e").textContent="بيانات الدخول غير صحيحة أو تم تجاوز المحاولات.";}</script></body></html>');
@@ -57,6 +59,7 @@ app.use(express.static("public"));
 
 const repository = createStoreRepository();
 const auditLog = createAuditLogger();
+const revokedSessionIds = new Set();
 const orders = repository.orders || new Map();
 const events = new Map();
 
@@ -114,7 +117,10 @@ function readSession(req) {
   if (!safeEqual(sig, expected)) return null;
   try {
     const data = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-    if (data.exp < Date.now() || data.u !== ADMIN_USERNAME) return null;
+    if (!Number.isFinite(data.exp) || data.exp <= Date.now() || !Number.isFinite(data.iat) || data.iat > Date.now() + 60_000) return null;
+    if (typeof data.jti !== "string" || revokedSessionIds.has(data.jti)) return null;
+    if (data.exp - data.iat > 8 * 60 * 60_000) return null;
+    if (data.u !== ADMIN_USERNAME) return null;
     const role = data.role || "platform_owner";
     if (!isKnownRole(role)) return null;
     return { ...data, role, tenantId: data.tenantId ?? null };
@@ -253,8 +259,10 @@ app.post("/api/admin/login", loginLimiter, (req, res) => {
     return res.status(401).json({ error: "INVALID_CREDENTIALS" });
   }
 
-  auditLog.record({ eventType: "auth.login.succeeded", actorId: ADMIN_USERNAME, role: "platform_owner", outcome: "success", resourceType: "session" });
-  const token = signSession({ u: ADMIN_USERNAME, role: "platform_owner", tenantId: null, iat: Date.now(), exp: Date.now() + 8 * 60 * 60_000 });
+  const issuedAt = Date.now();
+  const sessionId = crypto.randomUUID();
+  auditLog.record({ eventType: "auth.login.succeeded", actorId: ADMIN_USERNAME, role: "platform_owner", outcome: "success", resourceType: "session", requestId: sessionId });
+  const token = signSession({ u: ADMIN_USERNAME, role: "platform_owner", tenantId: null, jti: sessionId, iat: issuedAt, exp: issuedAt + 8 * 60 * 60_000 });
   res.setHeader("Set-Cookie",
     "bf_admin=" + token + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800");
   res.json({ ok: true, user: ADMIN_USERNAME, expiresIn: 28800 });
@@ -262,7 +270,10 @@ app.post("/api/admin/login", loginLimiter, (req, res) => {
 
 app.post("/api/admin/logout", (req, res) => {
   const session = readSession(req);
-  if (session) auditLog.record({ eventType: "auth.logout", actorId: session.u, role: session.role, tenantId: session.tenantId, outcome: "success", resourceType: "session" });
+  if (session) {
+    revokedSessionIds.add(session.jti);
+    auditLog.record({ eventType: "auth.logout", actorId: session.u, role: session.role, tenantId: session.tenantId, outcome: "success", resourceType: "session", requestId: session.jti });
+  }
   res.setHeader("Set-Cookie", "bf_admin=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0");
   res.json({ ok: true });
 });
@@ -270,7 +281,8 @@ app.post("/api/admin/logout", (req, res) => {
 app.get("/api/admin/session", (req, res) => {
   const session = readSession(req);
   if (!session) return res.status(401).json({ authenticated: false });
-  res.json({ authenticated: true, user: session.u, expiresAt: session.exp });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ authenticated: true, user: session.u, role: session.role, tenantId: session.tenantId, expiresAt: session.exp });
 });
 
 app.get("/api/stats", requireAdmin, async (req, res, next) => { try { res.json(await repository.stats()); } catch (e) { next(e); } });

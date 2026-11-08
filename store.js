@@ -12,7 +12,7 @@ const checkoutSchema=z.object({
  returnPath:z.string().max(200).default("/")
 });
 const publicProduct=p=>({id:p.id,name:p.name,description:p.description,category:p.category,priceHalalas:p.priceHalalas,compareAtHalalas:p.compareAtHalalas??null,sku:p.sku,stock:p.stock,imageUrl:p.imageUrl??null});
-export function attachStoreRoutes(app,{requireAdmin,repository}) {
+export function attachStoreRoutes(app,{requireAdmin,repository,auditLog=null}) {
  app.get("/api/categories",async(_req,res,next)=>{try{res.json(await repository.getCategories());}catch(e){next(e);}});
  app.get("/api/products",async(req,res,next)=>{try{
   const q=String(req.query.q||"").trim().slice(0,100),category=String(req.query.category||"").slice(0,80);
@@ -21,11 +21,15 @@ export function attachStoreRoutes(app,{requireAdmin,repository}) {
  app.get("/api/admin/products",requireAdmin,async(_req,res,next)=>{try{res.json((await repository.listProducts({admin:true})).map(publicProduct));}catch(e){next(e);}});
  app.post("/api/admin/products",requireAdmin,async(req,res,next)=>{try{
   const parsed=productInput.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_PRODUCT",issues:parsed.error.issues});
-  const product=await repository.createProduct(parsed.data);res.status(201).json(publicProduct(product));
+  const product=await repository.createProduct(parsed.data);
+  auditLog?.record({eventType:"catalog.product.created",actorId:req.auth?.u,role:req.auth?.role,tenantId:req.auth?.tenantId,resourceType:"product",resourceId:product.id,outcome:"success"});
+  res.status(201).json(publicProduct(product));
  }catch(e){if(e.code==="23505")return res.status(409).json({error:"SKU_ALREADY_EXISTS"});next(e);}});
  app.patch("/api/admin/products/:id",requireAdmin,async(req,res,next)=>{try{
   const parsed=productInput.partial().safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_PRODUCT",issues:parsed.error.issues});
-  const product=await repository.updateProduct(req.params.id,parsed.data);if(!product)return res.status(404).json({error:"PRODUCT_NOT_FOUND"});res.json(publicProduct(product));
+  const product=await repository.updateProduct(req.params.id,parsed.data);if(!product)return res.status(404).json({error:"PRODUCT_NOT_FOUND"});
+  auditLog?.record({eventType:"catalog.product.updated",actorId:req.auth?.u,role:req.auth?.role,tenantId:req.auth?.tenantId,resourceType:"product",resourceId:product.id,outcome:"success"});
+  res.json(publicProduct(product));
  }catch(e){if(e.code==="23505")return res.status(409).json({error:"SKU_ALREADY_EXISTS"});next(e);}});
  app.post("/api/cart/quote",async(req,res,next)=>{try{
   const parsed=z.object({items:itemsSchema}).safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_CART"});

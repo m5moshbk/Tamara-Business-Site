@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  ROLE_NAMES, isKnownRole, hasPermission, resolveTenantContext, tenantPredicate
+  ROLE_NAMES, isKnownRole, hasPermission, resolveTenantContext, tenantPredicate, createPermissionMiddleware
 } from "../platform/access-control.js";
 import { createAuditLogger } from "../platform/audit-log.js";
 
@@ -75,4 +75,24 @@ test("audit log allow-lists fields, bounds retention, and omits secrets and arbi
   assert.equal(Object.hasOwn(events[1], "password"), false);
   assert.equal(Object.hasOwn(events[1], "metadata"), false);
   assert.equal(log.storage, "volatile-memory");
+});
+
+test("permission middleware authenticates first and rejects insufficient roles", () => {
+  const middleware = createPermissionMiddleware(
+    req => req.session || null,
+    "catalog:manage"
+  );
+  const invoke = session => {
+    const result = { statusCode: 200, body: null, auth: null, nextCalled: false };
+    const res = {
+      status(code) { result.statusCode = code; return this; },
+      json(body) { result.body = body; return this; }
+    };
+    middleware({ session, auth: null }, res, () => { result.nextCalled = true; });
+    return result;
+  };
+  assert.equal(invoke(null).statusCode, 401);
+  assert.equal(invoke({ role: "support" }).statusCode, 403);
+  const allowed = invoke({ role: "platform_owner" });
+  assert.equal(allowed.nextCalled, true);
 });

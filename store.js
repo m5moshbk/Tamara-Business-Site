@@ -34,7 +34,9 @@ export function attachStoreRoutes(app,{requireAdmin,repository}) {
  }catch(e){next(e);}});
  app.post("/api/checkout",async(req,res,next)=>{try{
   const parsed=checkoutSchema.safeParse(req.body);if(!parsed.success)return res.status(400).json({error:"INVALID_CHECKOUT",issues:parsed.error.issues});
-  const order=await repository.createOrder(parsed.data);
+  const idempotencyKey=String(req.get("Idempotency-Key")||"");
+  if(!/^[A-Za-z0-9._:-]{16,160}$/.test(idempotencyKey))return res.status(400).json({error:"IDEMPOTENCY_KEY_REQUIRED"});
+  const order=await repository.createOrder({...parsed.data,idempotencyKey});
   const path=parsed.data.returnPath.startsWith("/")&&!parsed.data.returnPath.startsWith("//")?parsed.data.returnPath:"/";
   const checkoutUrl=path+(path.includes("?")?"&":"?")+"payment=preview&order="+encodeURIComponent(order.id);
   res.status(201).json({orderId:order.id,referenceId:order.referenceId,checkoutUrl,status:"preview_only",currency:"SAR",totalHalalas:order.amountHalalas,preview:true,message:"معاينة فقط؛ لم يتم إنشاء جلسة لدى مزود الدفع ولم يتم تحصيل أي مبلغ."});

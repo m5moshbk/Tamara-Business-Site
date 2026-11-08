@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 import crypto from "node:crypto";
 import { z } from "zod";
 import { attachStoreRoutes } from "./store.js";
+import { createStoreRepository } from "./database.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 10000);
@@ -22,7 +23,7 @@ app.use(express.json({ limit: "256kb" }));
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", ORIGIN);
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
   res.setHeader("Access-Control-Allow-Credentials", "true");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -49,7 +50,8 @@ app.use(express.static("public", { index: false }));
 app.get("/dashboard", (req, res) => { if (!readSession(req)) return res.redirect("/"); res.sendFile(process.cwd() + "/public/index.html"); });
 app.use(express.static("public"));
 
-const orders = new Map();
+const repository = createStoreRepository();
+const orders = repository.orders || new Map();
 const events = new Map();
 
 const orderSchema = z.object({
@@ -118,7 +120,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-attachStoreRoutes(app, { requireAdmin, orders });
+attachStoreRoutes(app, { requireAdmin, repository });
 
 function verifyTamaraJwt(token, secret) {
   if (!token || !secret) return false;
@@ -254,10 +256,8 @@ app.get("/api/admin/session", (req, res) => {
   res.json({ authenticated: true, user: session.u, expiresAt: session.exp });
 });
 
-app.get("/api/stats", requireAdmin, (req, res) => res.json(stats()));
-app.get("/api/orders", requireAdmin, (req, res) =>
-  res.json([...orders.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 100))
-);
+app.get("/api/stats", requireAdmin, async (req, res, next) => { try { res.json(await repository.stats()); } catch (e) { next(e); } });
+app.get("/api/orders", requireAdmin, async (req, res, next) => { try { res.json(await repository.listOrders(100)); } catch (e) { next(e); } });
 
 
 function recordWebhook(provider, req, res) {
@@ -269,36 +269,13 @@ function recordWebhook(provider, req, res) {
   });
 }
 
-app.post("/webhooks/tamara", (req, res) => {
+app.post("/webhooks/tamara", async (req, res) => {
   const token = getTamaraWebhookToken(req);
-  if (!token || !TAMARA_NOTIFICATION_TOKEN ||
-      !verifyTamaraJwt(token, TAMARA_NOTIFICATION_TOKEN)) {
+  if (!token || !TAMARA_NOTIFICATION_TOKEN || !verifyTamaraJwt(token, TAMARA_NOTIFICATION_TOKEN)) {
     return res.status(401).json({ error: "INVALID_TAMARA_WEBHOOK_SIGNATURE" });
   }
-
-  const body = req.body || {};
-  const providerOrderId = body.order_id ? String(body.order_id) : null;
-  const referenceId = body.order_reference_id ? String(body.order_reference_id) : null;
-  const order = [...orders.values()].find(o =>
-    (providerOrderId && o.providerOrderId === providerOrderId) ||
-    (referenceId && o.referenceId === referenceId)
-  );
-
-  if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND" });
-
-  const eventId = req.get("x-event-id") || req.get("x-webhook-id") ||
-    crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
-  if (events.has(eventId)) return res.status(200).json({ ok: true, idempotent: true });
-
-  const eventType = String(body.event_type || body.event || "").toLowerCase();
-  if (eventType === "order_captured") order.status = "captured";
-  else if (eventType === "order_authorised" || eventType === "order_authorized") order.status = "authorised";
-  else if (["order_declined", "order_canceled", "order_cancelled", "order_expired"].includes(eventType)) order.status = "failed";
-
-  order.updatedAt = new Date().toISOString();
-  orders.set(order.id, order);
-  events.set(eventId, { provider: "tamara", receivedAt: order.updatedAt });
-  return res.status(200).json({ ok: true, status: order.status });
+  // Verified notifications are not applied until persistent reconciliation is enabled and tested.
+  return res.status(503).json({ error: "TAMARA_WEBHOOK_RECONCILIATION_NOT_ENABLED" });
 });
 app.post("/webhooks/tabby", (req, res) => recordWebhook("tabby", req, res));
 

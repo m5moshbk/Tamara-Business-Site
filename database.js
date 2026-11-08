@@ -126,7 +126,7 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
       const providers={tabby:0,tamara:0};for(const row of p.rows)providers[row.provider]=row.count;
       const x=r.rows[0];return {totalOrders:x.total_orders,paidOrders:x.paid_orders,pending:x.pending,failed:x.failed,revenue:Number(x.revenue)/100,providers};
     },
-    async recordWebhook({provider,eventId,eventType,payload,referenceId,status,providerOrderId}){
+    async recordWebhook({provider,eventId,eventType,payload,referenceId,status,providerOrderId,providerPaymentId}){
       const client=await pool.connect();try{await client.query("BEGIN");
         const found=await client.query("SELECT o.id,o.status,pa.id AS attempt_id FROM bf_orders o JOIN bf_payment_attempts pa ON pa.order_id=o.id WHERE o.reference_id=$1 AND pa.provider=$2 FOR UPDATE",[referenceId,provider]);
         if(!found.rowCount){await client.query("ROLLBACK");return {duplicate:false,found:false};}
@@ -136,7 +136,7 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
         const current=found.rows[0].status,mayAdvance=current!=="failed"&&(status==="failed"?rank[current]<2:rank[status]>rank[current]);
         if(mayAdvance){
           await client.query("UPDATE bf_orders SET status=$1,updated_at=NOW() WHERE id=$2",[status,found.rows[0].id]);
-          await client.query("UPDATE bf_payment_attempts SET status=$1,provider_order_id=COALESCE($2,provider_order_id),updated_at=NOW() WHERE id=$3",[status,providerOrderId||null,found.rows[0].attempt_id]);
+          await client.query("UPDATE bf_payment_attempts SET status=$1,provider_order_id=COALESCE($2,provider_order_id),provider_payment_id=COALESCE($3,provider_payment_id),updated_at=NOW() WHERE id=$4",[status,providerOrderId||null,providerPaymentId||null,found.rows[0].attempt_id]);
         }
         await client.query("UPDATE bf_webhook_events SET processing_status='processed',processed_at=NOW() WHERE id=$1",[inserted.rows[0].id]);
         await client.query("COMMIT");return {duplicate:false,found:true,status:mayAdvance?status:current};

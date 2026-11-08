@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS bf_platform_users (
   email TEXT NOT NULL,
   full_name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
+  platform_role TEXT CHECK (platform_role IN ('platform_owner', 'platform_admin', 'operations', 'support')),
   status TEXT NOT NULL DEFAULT 'invited'
     CHECK (status IN ('invited', 'active', 'locked', 'disabled')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

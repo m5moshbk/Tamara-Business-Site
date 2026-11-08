@@ -113,7 +113,7 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
         const inserted=await client.query("INSERT INTO bf_orders(reference_id,customer_name,customer_email,customer_phone,subtotal_halalas,shipping_halalas,total_halalas,status) VALUES($1,$2,$3,$4,$5,0,$5,'preview_only') RETURNING *",[referenceId,customer.name,customer.email,customer.phone,total]);
         const order=orderFromRow({...inserted.rows[0],provider});
         for(const line of lines)await client.query("INSERT INTO bf_order_items(order_id,product_id,product_name_snapshot,sku_snapshot,quantity,unit_price_halalas,line_total_halalas) VALUES($1,$2,$3,$4,$5,$6,$7)",[order.id,line.productId,line.name,line.sku,line.quantity,line.unitPriceHalalas,line.lineTotalHalalas]);
-        await client.query("INSERT INTO bf_payment_attempts(order_id,provider,status,idempotency_key) VALUES($1,$2,'preview_only',$3)",[order.id,provider,"preview:"+order.id]);
+        await client.query("INSERT INTO bf_payment_attempts(order_id,provider,status,idempotency_key) VALUES($1,$2,'preview_only',$3)",[order.id,provider,idempotencyKey]);
         await client.query("COMMIT");return {...order,provider,items:lines};
       }catch(e){await client.query("ROLLBACK");throw e;}finally{client.release();}
     },

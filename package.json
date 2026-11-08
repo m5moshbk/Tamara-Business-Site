@@ -6,12 +6,13 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check server.js && node --check store.js"
+    "check": "node --check server.js && node --check store.js && node --check database.js && node --check payments/tamara.js && node --check payments/tabby.js"
   },
   "dependencies": {
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "express-rate-limit": "^8.1.0",
-    "zod": "^4.1.5"
+    "zod": "^4.1.5",
+    "pg": "^8.16.3"
   }
 }

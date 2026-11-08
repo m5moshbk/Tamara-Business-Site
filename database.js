@@ -57,8 +57,8 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
         if(!order)return {duplicate:false,found:false};
         webhookEvents.add(key);
         const rank={preview_only:-1,pending:0,approved:1,authorised:2,captured:3,closed:4,failed:-2};
-        if(status==="failed"){if(rank[order.status]<2)order.status="failed";}
-        else if(rank[status]>rank[order.status])order.status=status;
+        if(order.status!=="failed" && status==="failed"){if(rank[order.status]<2)order.status="failed";}
+        else if(order.status!=="failed" && rank[status]>rank[order.status])order.status=status;
         order.updatedAt=new Date().toISOString();orders.set(order.id,order);
         return {duplicate:false,found:true,status:order.status};
       },
@@ -133,7 +133,7 @@ export function createStoreRepository({connectionString=process.env.DATABASE_URL
         const inserted=await client.query("INSERT INTO bf_webhook_events(provider,provider_event_id,event_type,signature_verified,payload) VALUES($1,$2,$3,TRUE,$4::jsonb) ON CONFLICT(provider,provider_event_id) DO NOTHING RETURNING id",[provider,eventId,eventType,JSON.stringify(payload)]);
         if(!inserted.rowCount){await client.query("COMMIT");return {duplicate:true,found:true,status:found.rows[0].status};}
         const rank={pending:0,approved:1,authorised:2,captured:3,closed:4,failed:-2,preview_only:-1};
-        const current=found.rows[0].status,mayAdvance=status==="failed"?rank[current]<2:rank[status]>rank[current];
+        const current=found.rows[0].status,mayAdvance=current!=="failed"&&(status==="failed"?rank[current]<2:rank[status]>rank[current]);
         if(mayAdvance){
           await client.query("UPDATE bf_orders SET status=$1,updated_at=NOW() WHERE id=$2",[status,found.rows[0].id]);
           await client.query("UPDATE bf_payment_attempts SET status=$1,provider_order_id=COALESCE($2,provider_order_id),updated_at=NOW() WHERE id=$3",[status,providerOrderId||null,found.rows[0].attempt_id]);

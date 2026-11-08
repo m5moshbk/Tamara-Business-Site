@@ -27,8 +27,14 @@ test("verified event transitions are monotonic and duplicate events are idempote
  assert.equal(stale.status,"authorised");
  const duplicate=await repo.recordWebhook({provider:"tamara",eventId:"evt-authorised",eventType:"order_authorised",payload:{},referenceId:order.referenceId,status:"authorised"});
  assert.equal(duplicate.duplicate,true);
- const failed=await repo.recordWebhook({provider:"tamara",eventId:"evt-failed",eventType:"order_declined",payload:{},referenceId:order.referenceId,status:"failed"});
+ const declineAfterAuthorisation=await repo.recordWebhook({provider:"tamara",eventId:"evt-decline-late",eventType:"order_declined",payload:{},referenceId:order.referenceId,status:"failed"});
+ assert.equal(declineAfterAuthorisation.status,"authorised");
+ const captured=await repo.recordWebhook({provider:"tamara",eventId:"evt-captured",eventType:"order_captured",payload:{},referenceId:order.referenceId,status:"captured"});
+ assert.equal(captured.status,"captured");
+ const secondProduct=await repo.createProduct({name:"Failure Test Product",description:"",category:"Tests",priceHalalas:7000,stock:2,active:true,sku:"WH-2"});
+ const secondOrder=await repo.createOrder({provider:"tamara",items:[{productId:secondProduct.id,quantity:1}],customer:{name:"Test User",email:"test@example.invalid",phone:"0500000000"},idempotencyKey:"webhook-failure-order-0001"});
+ const failed=await repo.recordWebhook({provider:"tamara",eventId:"evt-failed",eventType:"order_declined",payload:{},referenceId:secondOrder.referenceId,status:"failed"});
  assert.equal(failed.status,"failed");
- const late=await repo.recordWebhook({provider:"tamara",eventId:"evt-late-captured",eventType:"order_captured",payload:{},referenceId:order.referenceId,status:"captured"});
+ const late=await repo.recordWebhook({provider:"tamara",eventId:"evt-late-captured",eventType:"order_captured",payload:{},referenceId:secondOrder.referenceId,status:"captured"});
  assert.equal(late.status,"failed");
 });

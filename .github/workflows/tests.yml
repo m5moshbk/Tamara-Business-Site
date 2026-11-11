@@ -5,9 +5,14 @@ on:
     branches:
       - fix/tabby-webhook-fail-closed-20261102
       - feat/beefitness-full-store-20261108
+      - fix/beefitness-tenant-isolation-phase-a-20261111
   pull_request:
     paths:
       - "server.js"
+      - "store.js"
+      - "database.js"
+      - "platform/**"
+      - "migrations/**"
       - "test/**"
       - "package.json"
       - ".github/workflows/tests.yml"

@@ -68,7 +68,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bf_order_items_product_tenant_fk') THEN
     ALTER TABLE bf_order_items ADD CONSTRAINT bf_order_items_product_tenant_fk
       FOREIGN KEY (product_id, tenant_id) REFERENCES bf_products(id, tenant_id)
-      ON DELETE RESTRICT NOT VALID;
+      ON DELETE NO ACTION NOT VALID;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bf_payment_attempts_tenant_fk') THEN
     ALTER TABLE bf_payment_attempts ADD CONSTRAINT bf_payment_attempts_tenant_fk

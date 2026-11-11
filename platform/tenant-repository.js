@@ -271,7 +271,18 @@ export function createTenantScopedRepository({ pool } = {}) {
           "VALUES($1,$2,$3,$4,TRUE,$5::jsonb) ON CONFLICT(provider, provider_event_id) DO NOTHING RETURNING id",
           [tenant, provider, eventId, eventType, JSON.stringify(payload ?? {})]
         );
-        if (!inserted.rowCount) return { duplicate: true, found: true, status: order.status };
+        if (!inserted.rowCount) {
+          const priorEvent = await client.query(
+            "SELECT tenant_id FROM bf_webhook_events WHERE provider = $1 AND provider_event_id = $2",
+            [provider, eventId]
+          );
+          if (!priorEvent.rowCount || priorEvent.rows[0].tenant_id !== tenant) {
+            throw Object.assign(new Error("WEBHOOK_EVENT_TENANT_CONFLICT"), {
+              code: "WEBHOOK_EVENT_TENANT_CONFLICT"
+            });
+          }
+          return { duplicate: true, found: true, status: order.status };
+        }
         await client.query(
           "UPDATE bf_payment_attempts SET provider_order_id=COALESCE($3,provider_order_id), " +
           "provider_payment_id=COALESCE($4,provider_payment_id), status=$5, updated_at=NOW() " +

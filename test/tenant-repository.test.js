@@ -7,18 +7,38 @@ const tenantB = "22222222-2222-4222-8222-222222222222";
 
 function fakePool() {
   const calls = [];
+  const respond = (sql) => {
+    if (sql.includes("INSERT INTO bf_categories")) return { rows: [{ id: 7, name: "Tests" }], rowCount: 1 };
+    if (sql.includes("INSERT INTO bf_products")) return {
+      rows: [{ id: "product-1", name: "Test", category_id: 7, price_halalas: 100, stock: 1, active: true }],
+      rowCount: 1
+    };
+    if (sql.includes("INSERT INTO bf_orders")) return {
+      rows: [{
+        id: "order-1", reference_id: "BF-TEST", total_halalas: 0, currency: "SAR",
+        status: "preview_only", customer_name: "Test", customer_email: "test@example.invalid",
+        customer_phone: "0500000000"
+      }],
+      rowCount: 1
+    };
+    if (sql.includes("FROM bf_orders WHERE tenant_id")) return {
+      rows: [{ total_orders: 0, paid_orders: 0, pending: 0, failed: 0, revenue: 0 }],
+      rowCount: 1
+    };
+    return { rows: [], rowCount: 0 };
+  };
   return {
     calls,
     async query(sql, values = []) {
       calls.push({ sql, values });
-      return { rows: [], rowCount: 0 };
+      return respond(sql);
     },
     async connect() {
       return {
         async query(sql, values = []) {
           calls.push({ sql, values });
-          if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
-          return { rows: [], rowCount: 0 };
+          if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [], rowCount: 0 };
+          return respond(sql);
         },
         release() {}
       };
@@ -81,6 +101,10 @@ test("writes persist the tenant on products, orders, order items, and payment at
   });
   const lookup = pool2.calls.find(call => call.sql.includes("WHERE pa.tenant_id = $1"));
   assert.deepEqual(lookup.values, [tenantB, "tenant-order-idempotency-0001"]);
+  const orderInsert = pool2.calls.find(call => call.sql.includes("INSERT INTO bf_orders"));
+  const paymentInsert = pool2.calls.find(call => call.sql.includes("INSERT INTO bf_payment_attempts"));
+  assert.equal(orderInsert.values[0], tenantB);
+  assert.equal(paymentInsert.values[0], tenantB);
 });
 
 test("webhook tenant is resolved from the stored order and is not accepted from input", async () => {

@@ -29,13 +29,16 @@ test("tenant migration adds tenant ownership to every core business table", () =
 });
 
 test("order items and payment attempts are constrained to the owning tenant order", () => {
-  assert.match(migration, /FOREIGN KEY \\(order_id, tenant_id\\) REFERENCES bf_orders\\(id, tenant_id\\)/i);
-  assert.match(migration, /FOREIGN KEY \\(product_id, tenant_id\\) REFERENCES bf_products\\(id, tenant_id\\)/i);
+  assert.ok(migration.includes("FOREIGN KEY (order_id, tenant_id) REFERENCES bf_orders(id, tenant_id)"));
+  assert.ok(migration.includes("FOREIGN KEY (product_id, tenant_id) REFERENCES bf_products(id, tenant_id)"));
 });
 
 test("migration does not guess legacy ownership or enable RLS prematurely", () => {
-  assert.doesNotMatch(migration, /UPDATE\\s+bf_(products|orders|order_items|payment_attempts|webhook_events)\\s+SET\\s+tenant_id/i);
-  assert.doesNotMatch(migration, /ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY/i);
-  assert.match(migration, /Existing legacy rows are intentionally not backfilled/i);
-  assert.match(migration, /NOT VALID/i);
+  assert.doesNotMatch(
+    migration,
+    new RegExp(String.raw`UPDATE\\s+bf_(products|orders|order_items|payment_attempts|webhook_events)\\s+SET\\s+tenant_id`, "i")
+  );
+  assert.doesNotMatch(migration, new RegExp(String.raw`ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY`, "i"));
+  assert.ok(migration.includes("Existing legacy rows are intentionally not backfilled"));
+  assert.ok(migration.includes("NOT VALID"));
 });

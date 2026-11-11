@@ -46,3 +46,14 @@ Do not run this migration against production. Do not backfill using an assumed d
 - Missing tenant context fails closed on every merchant-scoped operation.
 - Existing records are not assigned to a tenant without evidence and approval.
 - No production database, deployment, secrets, or payment settings are changed by this phase.
+
+
+## Phase B groundwork — tenant-scoped repository adapter
+
+Added `platform/tenant-repository.js` as a separate PostgreSQL adapter. It provides tenant-bound product reads/writes, order creation and listing, tenant-scoped aggregates, and verified-webhook persistence whose tenant is derived from the matched stored order.
+
+The adapter requires a valid UUID tenant ID for every tenant-owned operation and binds it as a SQL parameter. It does not trust webhook/request tenant IDs. The existing legacy repository and HTTP routes are intentionally unchanged: the new adapter is not wired into the running application until durable merchant identity, trusted storefront resolution, route-level authorization, and PostgreSQL integration tests are completed.
+
+Automated mock-pool tests cover missing tenant context, tenant-bound product/order reads, tenant-bearing writes, and webhook tenant derivation. These tests verify SQL construction and adapter behavior; they are not a substitute for PostgreSQL integration or cross-tenant runtime tests.
+
+**Important schema follow-up:** the original schema declares globally unique SKU, order reference, idempotency key, and provider event identifiers. Tenant-local uniqueness and safe legacy constraint migration must be reviewed before enabling multiple tenants with overlapping identifiers.

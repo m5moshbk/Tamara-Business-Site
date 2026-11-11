@@ -122,3 +122,36 @@ test("webhook tenant is resolved from the stored order and is not accepted from 
   const lookup = pool.calls.find(call => call.sql.includes("WHERE o.reference_id = $1"));
   assert.deepEqual(lookup.values, ["BF-REFERENCE", "tamara"]);
 });
+
+test("webhook event ID collisions across tenants fail closed", async () => {
+  const calls = [];
+  const pool = {
+    async query() { return { rows: [], rowCount: 0 }; },
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          calls.push({ sql, values });
+          if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+          if (sql.includes("WHERE o.reference_id = $1")) {
+            return { rows: [{ id: "order-A", status: "pending", tenant_id: tenantA, attempt_id: 1 }], rowCount: 1 };
+          }
+          if (sql.includes("INSERT INTO bf_webhook_events")) return { rows: [], rowCount: 0 };
+          if (sql.includes("SELECT tenant_id FROM bf_webhook_events")) {
+            return { rows: [{ tenant_id: tenantB }], rowCount: 1 };
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release() {}
+      };
+    }
+  };
+  const repo = createTenantScopedRepository({ pool });
+  await assert.rejects(
+    () => repo.recordVerifiedWebhook({
+      provider: "tamara", eventId: "reused-event-id", eventType: "order_approved",
+      payload: {}, referenceId: "BF-REFERENCE-A", status: "approved"
+    }),
+    error => error.code === "WEBHOOK_EVENT_TENANT_CONFLICT"
+  );
+  assert.ok(calls.some(call => call.sql.includes("SELECT tenant_id FROM bf_webhook_events")));
+});

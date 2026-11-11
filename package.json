@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "check": "node --check server.js && node --check store.js && node --check database.js && node --check payments/tamara.js && node --check payments/tabby.js && node --check platform/access-control.js && node --check platform/audit-log.js"
+    "check": "node --check server.js && node --check store.js && node --check database.js && node --check payments/tamara.js && node --check payments/tabby.js && node --check platform/access-control.js && node --check platform/audit-log.js && node --check platform/tenant-repository.js"
   },
   "dependencies": {
     "express": "^5.1.0",
